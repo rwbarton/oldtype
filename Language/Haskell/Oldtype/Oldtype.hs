@@ -15,8 +15,8 @@ import Language.Haskell.TH.Syntax hiding (lift)
 type Env = [(Name, Type)]
 data ContTableEntry = Continuation (TypeOrPartial -> R TypeOrPartial) | Variable Name
 type ContTable = [((Env, Type), ContTableEntry)]
-newtype R a = R { runR :: ReaderT ContTable (ContT Type (StateT Env Q)) a } deriving (Functor, Monad, MonadReader ContTable, MonadState Env, MonadCont)
--- The Env state is write-only and contains a list of generated definitions.
+newtype R a = R { runR :: ReaderT ContTable (ContT Type (StateT [Dec] Q)) a } deriving (Functor, Monad, MonadReader ContTable, MonadState [Dec], MonadCont)
+-- The state is write-only and contains a list of generated definitions.
 -- The ContTable is a list of continuations to jump back to when a loop is detected.
 
 data TypeOrPartial = Type Type | Partial Env [Name] Type
@@ -55,13 +55,13 @@ partial env [] t = do
   case mCont of
     Nothing -> callCC $ \cont -> local (((env, t), Continuation cont) :) $ expand t'
     Just (Continuation cont) -> do
-      var <- liftQ $ newName "x"
+      var <- liftQ $ newName "X"
       t'' <- local ((((env, t), Variable var) :) . filter (isVariable . snd)) $ expandType t'
-      modify ((var, t'') :)
-      cont $ Type (VarT var)
+      modify ((NewtypeD [] var [] (NormalC var [(NotStrict, t'')]) []) :)
+      cont $ Type (ConT var)
         where isVariable (Variable _) = True
               isVariable _ = False
-    Just (Variable var) -> return $ Type (VarT var)
+    Just (Variable var) -> return $ Type (ConT var)
 partial env args t = return $ Partial env args t
 
 subst :: Env -> Type -> Type
@@ -81,5 +81,5 @@ expandType t = do
     Type t'' -> return t''
     _ -> error "Unexpected partially applied type synonym or newtype"
 
-oldtype :: Type -> Q (Type, [(Name, Type)])
+oldtype :: Type -> Q (Type, [Dec])
 oldtype t = ((runR (expandType t) `runReaderT` []) `runContT` return) `runStateT` []
